@@ -16,7 +16,7 @@ export async function login(formData: FormData): Promise<AuthResult> {
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -44,7 +44,7 @@ export async function register(formData: FormData): Promise<AuthResult> {
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
 
     const { error } = await supabase.auth.signUp({
       email,
@@ -69,7 +69,7 @@ export async function register(formData: FormData): Promise<AuthResult> {
 
 export async function logout(): Promise<AuthResult> {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { error } = await supabase.auth.signOut()
 
     if (error) {
@@ -84,7 +84,7 @@ export async function logout(): Promise<AuthResult> {
 }
 
 export async function getSession() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { session } } = await supabase.auth.getSession()
   return session
 }
