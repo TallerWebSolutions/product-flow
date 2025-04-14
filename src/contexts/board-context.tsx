@@ -50,6 +50,7 @@ type BoardContextType = {
   realtimeStatus: 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
   reorderCards: (updatedCards: Card[]) => void;
   moveCardToColumn: (cardId: string, sourceColumnId: string | null, targetColumnId: string) => void;
+  moveCardToStatus: (cardId: string, statusId: string) => Promise<void>;
   findColumnById: (id: string, columnsToSearch?: Column[]) => Column | undefined;
   addCard: (card: Partial<Card> & { column_id?: string }) => Promise<Card>;
   updateCard: (card: Partial<Card> & { id: string }) => Promise<Card>;
@@ -225,7 +226,7 @@ export function BoardProvider({
 
       console.log(`Fetched ${dbColumns?.length || 0} columns for board ${boardId}`);
 
-      // Fetch cards for this specific board only
+      // Fetch cards for this specific board
       const { data: dbCards, error: cardsError } = await supabase
         .from('cards')
         .select(`
@@ -241,6 +242,20 @@ export function BoardProvider({
       }
 
       console.log(`Fetched ${dbCards?.length || 0} cards for board ${boardId}`);
+
+      // Also fetch the status_columns mapping to support the new status-based model
+      const { data: statusColumns, error: statusColumnsError } = await supabase
+        .from('status_columns')
+        .select('status_id, column_id')
+        .filter('column_id', 'in', `(${dbColumns?.map(col => col.id).join(',')})`)
+        .order('created_at', { ascending: true });
+
+      if (statusColumnsError) {
+        console.error('Error fetching status-column mappings:', statusColumnsError);
+        // Non-critical error, we can proceed without this data during transition
+      } else {
+        console.log(`Fetched ${statusColumns?.length || 0} status-column mappings`);
+      }
 
       if (!boardData) {
         console.error(`Board with ID ${boardId} not found in the 'boards' table`);
@@ -315,11 +330,34 @@ export function BoardProvider({
       setColumns(hierarchicalColumns);
       setError(null); // Clear any previous errors
 
-      // Calculate card counts per column
+      // Calculate card counts per column based on status-column mapping and card statuses
       const counts: Record<string, number> = {};
 
-      if (dbCards && dbCards.length > 0) {
-        // Use the converted app cards to calculate counts
+      if (dbCards && dbCards.length > 0 && statusColumns && statusColumns.length > 0) {
+        // Create a mapping of status_id to column_id
+        const statusToColumnMap: Record<string, string[]> = {};
+        statusColumns.forEach(sc => {
+          if (!statusToColumnMap[sc.status_id]) {
+            statusToColumnMap[sc.status_id] = [];
+          }
+          statusToColumnMap[sc.status_id].push(sc.column_id);
+        });
+
+        // Calculate counts based on status
+        const appCards = dbCards.map(convertToAppCard);
+        appCards.forEach(card => {
+          if (card.statusId && statusToColumnMap[card.statusId]) {
+            // A status can be mapped to multiple columns
+            statusToColumnMap[card.statusId].forEach(columnId => {
+              counts[columnId] = (counts[columnId] || 0) + 1;
+            });
+          } else {
+            // Fallback to direct column mapping for backward compatibility
+            counts[card.columnId] = (counts[card.columnId] || 0) + 1;
+          }
+        });
+      } else if (dbCards && dbCards.length > 0) {
+        // Fallback to old direct column mapping if no status-column mappings exist
         const appCards = dbCards.map(convertToAppCard);
         appCards.forEach(card => {
           counts[card.columnId] = (counts[card.columnId] || 0) + 1;
@@ -865,7 +903,7 @@ export function BoardProvider({
     }
   };
 
-  // Handler for reordering cards within a column
+  // Handler for reordering cards within a status
   const reorderCards = async (updatedCards: Card[]) => {
     try {
       // Update the local state optimistically
@@ -892,7 +930,6 @@ export function BoardProvider({
       const { data: maxOrderData, error: maxOrderError } = await supabase
         .from('cards')
         .select('order')
-        .eq('board_id', boardId)
         .order('order', { ascending: false })
         .limit(1);
 
@@ -904,6 +941,19 @@ export function BoardProvider({
       // Get the highest order value plus a buffer
       const maxOrder = (maxOrderData && maxOrderData.length > 0) ? maxOrderData[0].order : 0;
       const tempOrderBase = maxOrder + 10000;
+
+      // Group cards by status
+      const cardsByStatus: Record<string, Card[]> = {};
+
+      updatedCards.forEach(card => {
+        // Group by status (primary)
+        if (card.statusId) {
+          if (!cardsByStatus[card.statusId]) {
+            cardsByStatus[card.statusId] = [];
+          }
+          cardsByStatus[card.statusId].push(card);
+        }
+      });
 
       // Two-phase update to avoid constraint violations
       for (let i = 0; i < updatedCards.length; i++) {
@@ -976,8 +1026,18 @@ export function BoardProvider({
       return false;
     }
 
-    // Get current card count for this column specifically (not including subcolumns)
-    const currentCount = cards.filter(card => card.columnId === targetColumnId).length;
+    // Find all statuses associated with this column
+    const columnStatuses = cards
+      .filter(card => card.columnId === targetColumnId)
+      .map(card => card.statusId);
+    
+    // Get unique status IDs for this column
+    const uniqueStatusIds = [...new Set(columnStatuses)];
+    
+    // Count cards that have statuses associated with this column
+    const currentCount = cards.filter(card => 
+      uniqueStatusIds.includes(card.statusId)
+    ).length;
 
     // Check if adding one more card would exceed the max limit
     return currentCount >= targetColumn.maxWipLimit;
@@ -986,23 +1046,14 @@ export function BoardProvider({
   // Handler for moving a card to a different column
   const moveCardToColumn = async (cardId: string, sourceColumnId: string | null, targetColumnId: string) => {
     try {
-      // Find the card to move and determine sourceColumnId if not provided
+      // Find the card to move
       const cardToMove = cards.find(c => c.id === cardId);
       if (!cardToMove) {
         throw new Error(`Card with ID ${cardId} not found`);
       }
 
-      // Use provided sourceColumnId or get it from the card
-      const actualSourceColumnId = sourceColumnId || cardToMove.columnId;
-
-      // Check that both columns exist using the recursive function
-      const sourceColumn = findColumnById(actualSourceColumnId);
+      // Check that target column exists
       const targetColumn = findColumnById(targetColumnId);
-
-      if (!sourceColumn) {
-        throw new Error(`Source column with ID ${actualSourceColumnId} not found`);
-      }
-
       if (!targetColumn) {
         throw new Error(`Target column with ID ${targetColumnId} not found`);
       }
@@ -1015,57 +1066,79 @@ export function BoardProvider({
         return;
       }
 
-      // Get cards in the target column
-      const targetColumnCards = cards.filter(c => c.columnId === targetColumnId);
-
-      // Determine the new order in the target column (add at the end)
-      const newOrder = targetColumnCards.length > 0
-        ? Math.max(...targetColumnCards.map(c => c.order)) + 1
-        : 1;
-
-      // Update the local state optimistically
-      setCards(prevCards => {
-        return prevCards.map(card => {
-          if (card.id === cardId) {
-            return {
-              ...card,
-              columnId: targetColumnId,
-              order: newOrder
-            };
-          }
-          return card;
-        });
-      });
-
-      // Update card counts for both columns
-      setCardCounts(prev => {
-        const newCounts = { ...prev };
-        // Decrease count in source column
-        newCounts[actualSourceColumnId] = Math.max(0, (newCounts[actualSourceColumnId] || 0) - 1);
-        // Increase count in target column
-        newCounts[targetColumnId] = (newCounts[targetColumnId] || 0) + 1;
-        return newCounts;
-      });
-
-      // Update in Supabase
+      // Find a status associated with this column through status_columns
       const supabase = await createClient();
+      
+      // Query to find a status mapped to the target column
+      const { data: statusColumnData, error: statusColumnError } = await supabase
+        .from('status_columns')
+        .select('status_id')
+        .eq('column_id', targetColumnId)
+        .order('created_at', { ascending: true }) // Get the first status created for this column
+        .limit(1)
+        .single();
+      
+      if (statusColumnError) {
+        if (statusColumnError.code === 'PGRST116') { // PGRST116 = no rows returned
+          toast.error("Cannot move card", {
+            description: `Column "${targetColumn.name}" has no status associated with it. Please set up a status for this column first.`,
+          });
+          return;
+        } else {
+          console.error('Error finding status for column:', statusColumnError);
+          throw new Error(`Failed to find status for column: ${statusColumnError.message}`);
+        }
+      }
+      
+      // Get the status ID for the target column
+      const targetStatusId = statusColumnData.status_id;
+      if (!targetStatusId) {
+        throw new Error(`No status found for column ${targetColumnId}`);
+      }
 
+      // Use moveCardToStatus to update the card's status
+      await moveCardToStatus(cardId, targetStatusId);
+      
+      // We still need to update the column_id for backward compatibility
+      // But this will be removed in future versions when we fully migrate to status-based model
       const { error } = await supabase
         .from('cards')
-        .update({
-          column_id: targetColumnId,
-          order: newOrder
-        })
+        .update({ column_id: targetColumnId })
         .eq('id', cardId);
 
       if (error) {
-        console.error('Error moving card:', error);
-        throw new Error(`Failed to move card: ${error.message}`);
-      }
+        console.error('Error updating card column_id:', error);
+        // This is not a critical error since we've already updated the status_id,
+        // so we'll just log it but not throw
+        toast.warning('Partial update', {
+          description: 'Card status was updated but column reference may be inconsistent.',
+        });
+      } else {
+        // Update the card's columnId in local state
+        setCards(prevCards => {
+          return prevCards.map(card => {
+            if (card.id === cardId) {
+              return {
+                ...card,
+                columnId: targetColumnId,
+              };
+            }
+            return card;
+          });
+        });
 
-      toast.success('Card moved', {
-        description: `Card moved to different column successfully.`,
-      });
+        // Update card counts for columns (for backward compatibility)
+        if (sourceColumnId) {
+          setCardCounts(prev => {
+            const newCounts = { ...prev };
+            // Decrease count in source column
+            newCounts[sourceColumnId] = Math.max(0, (newCounts[sourceColumnId] || 0) - 1);
+            // Increase count in target column
+            newCounts[targetColumnId] = (newCounts[targetColumnId] || 0) + 1;
+            return newCounts;
+          });
+        }
+      }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Failed to move card";
       console.error('Move card error:', error);
@@ -1098,8 +1171,27 @@ export function BoardProvider({
 
   // Get card count for a column
   const getCardCount = (columnId: string): number => {
-    // Direct cards in this column
-    const directCount = cardCounts[columnId] || 0;
+    // In the transition period, we'll use a hybrid approach that considers both status and direct column association
+    
+    // Step 1: Get statuses associated with this column
+    const columnStatuses = cards
+      .filter(card => card.columnId === columnId)
+      .map(card => card.statusId);
+    
+    // Get unique status IDs for this column
+    const uniqueStatusIds = [...new Set(columnStatuses)];
+    
+    // Step 2: Count all cards that have these statuses, regardless of their column
+    const statusBasedCount = uniqueStatusIds.length > 0 ?
+      cards.filter(card => 
+        uniqueStatusIds.includes(card.statusId)
+      ).length : 0;
+    
+    // During transition, we also count cards directly mapped to column for backward compatibility
+    const directColumnCount = cards.filter(card => card.columnId === columnId).length;
+    
+    // Use the maximum of these two counts during the transition period
+    const directCount = Math.max(statusBasedCount, directColumnCount);
 
     // Find the column to check if it has subcolumns
     const column = findColumnById(columnId);
@@ -1226,6 +1318,10 @@ export function BoardProvider({
       
       console.log(`Creating card in column: ${columnId}`);
 
+      if (!columnId) {
+        throw new Error("Column ID is required to create a card");
+      }
+
       // Get the column to ensure board association
       const { data: columnData } = await supabase
         .from('columns')
@@ -1237,14 +1333,52 @@ export function BoardProvider({
         throw new Error(`Column ${columnId} not found`);
       }
 
-      // Prepare the new card with the correct board ID
+      // We MUST have a status_id for each card
+      let statusId = cardData.statusId;
+      
+      // If no statusId is provided, find a status associated with this column
+      if (!statusId) {
+        const { data: statusColumnData, error: statusColumnError } = await supabase
+          .from('status_columns')
+          .select('status_id')
+          .eq('column_id', columnId)
+          .order('created_at', { ascending: true }) // Get the first status created for this column
+          .limit(1)
+          .single();
+        
+        if (!statusColumnError) {
+          statusId = statusColumnData.status_id;
+        } else if (statusColumnError.code !== 'PGRST116') { // PGRST116 = no rows returned
+          console.error('Error finding status for column:', statusColumnError);
+        }
+        
+        // If no status found via status_columns, use a default status
+        if (!statusId) {
+          // Try to get the first status by order
+          const { data: defaultStatusData, error: defaultStatusError } = await supabase
+            .from('statuses')
+            .select('id')
+            .order('order', { ascending: true })
+            .limit(1)
+            .single();
+            
+          if (!defaultStatusError) {
+            statusId = defaultStatusData.id;
+          } else {
+            console.error('Error finding default status:', defaultStatusError);
+            throw new Error(`No status found for column ${columnId} and no default status available. Please create a status first.`);
+          }
+        }
+      }
+
+      // Prepare the new card with the correct board ID and status ID
       const newCard = {
         title: cardData.title || 'New Card',
         description: cardData.description || null,
         column_id: columnId,
-        status_id: cardData.statusId || null,
-        // Calculate the next order if not provided
-        order: cardData.order !== undefined ? cardData.order : getNextOrder(columnId),
+        status_id: statusId,
+        // Calculate the next order if not provided - now based on status rather than column
+        order: cardData.order !== undefined ? cardData.order : await getNextOrderForStatus(statusId!),
         assignee_id: cardData.assigneeId || null,
         metadata: {
           ...(cardData.metadata || {}),
@@ -1369,6 +1503,98 @@ export function BoardProvider({
     }
   };
 
+  // Handler for moving a card to a different status
+  const moveCardToStatus = async (cardId: string, statusId: string): Promise<void> => {
+    try {
+      // Find the card to move
+      const cardToMove = cards.find(c => c.id === cardId);
+      if (!cardToMove) {
+        throw new Error(`Card with ID ${cardId} not found`);
+      }
+
+      // Get cards with the same status to determine order
+      const statusCards = cards.filter(c => c.statusId === statusId);
+
+      // Determine the new order in the target status (add at the end)
+      const newOrder = statusCards.length > 0
+        ? Math.max(...statusCards.map(c => c.order)) + 1
+        : 1;
+
+      // Update the local state optimistically
+      setCards(prevCards => {
+        return prevCards.map(card => {
+          if (card.id === cardId) {
+            return {
+              ...card,
+              statusId: statusId,
+              order: newOrder
+            };
+          }
+          return card;
+        });
+      });
+
+      // Update in Supabase
+      const supabase = await createClient();
+
+      const { error } = await supabase
+        .from('cards')
+        .update({
+          status_id: statusId,
+          order: newOrder
+        })
+        .eq('id', cardId);
+
+      if (error) {
+        console.error('Error updating card status:', error);
+        throw new Error(`Failed to update card status: ${error.message}`);
+      }
+
+      toast.success('Card status updated', {
+        description: `Card status changed successfully.`,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to update card status";
+      console.error('Update card status error:', error);
+      toast.error("Failed to update card status", {
+        description: errorMessage,
+      });
+
+      // Reload data in case of error to reset state
+      fetchData();
+    }
+  };
+
+  // Helper function to get the next order number for a new card in a status
+  const getNextOrderForStatus = async (statusId: string): Promise<number> => {
+    // First check local state for cards with this status
+    const statusCards = cards.filter(c => c.statusId === statusId);
+    if (statusCards.length > 0) {
+      return Math.max(...statusCards.map(c => c.order)) + 1;
+    }
+    
+    // If no cards in local state, check database
+    try {
+      const supabase = await createClient();
+      const { data, error } = await supabase
+        .from('cards')
+        .select('order')
+        .eq('status_id', statusId)
+        .order('order', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error('Error getting max order for status:', error);
+        return 1; // Default to 1 if there's an error
+      }
+
+      return data && data.length > 0 ? data[0].order + 1 : 1;
+    } catch (error) {
+      console.error('Error in getNextOrderForStatus:', error);
+      return 1; // Default to 1 if there's an error
+    }
+  };
+
   return (
     <BoardContext.Provider
       value={{
@@ -1387,6 +1613,7 @@ export function BoardProvider({
         realtimeStatus,
         reorderCards,
         moveCardToColumn,
+        moveCardToStatus,
         findColumnById,
         addCard,
         updateCard,
