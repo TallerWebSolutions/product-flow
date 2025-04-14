@@ -68,8 +68,7 @@ export interface Card {
   id: string;
   title: string;
   description: string | null;
-  column_id: string;
-  status_id: string | null;
+  status_id: string;
   order: number;
   assignee_id: string | null;
   created_at: string;

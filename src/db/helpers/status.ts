@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { Status, Transition, StatusColumn } from '@/types/status';
+import { Card } from '@/types/card';
 
 // Get all statuses
 export async function getStatuses(): Promise<Status[]> {
@@ -70,6 +71,31 @@ export async function getStatusColumns(): Promise<StatusColumn[]> {
   }));
 }
 
+// Get status-column mappings for a specific board
+export async function getStatusColumnsForBoard(boardId: string): Promise<StatusColumn[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('status_columns')
+    .select(`
+      *,
+      columns!inner(*)
+    `)
+    .eq('columns.board_id', boardId);
+
+  if (error) {
+    console.error('Error fetching status columns for board:', error);
+    throw error;
+  }
+
+  return (data || []).map((statusColumn: any) => ({
+    id: statusColumn.id,
+    statusId: statusColumn.status_id,
+    columnId: statusColumn.columns.id,
+    createdAt: statusColumn.created_at,
+    updatedAt: statusColumn.updated_at
+  }));
+}
+
 // Create a new status
 export async function createStatus(status: Omit<Status, 'id' | 'createdAt' | 'updatedAt'>): Promise<Status> {
   const supabase = createClient();
@@ -123,5 +149,118 @@ export async function mapStatusToColumn(statusId: string, columnId: string): Pro
     columnId: data.column_id,
     createdAt: data.created_at,
     updatedAt: data.updated_at
+  };
+}
+
+// Get cards by status
+export async function getCardsByStatus(statusId: string): Promise<Card[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('cards')
+    .select(`
+      *,
+      assignee:assignee_id(id, email, user_metadata)
+    `)
+    .eq('status_id', statusId)
+    .order('order');
+
+  if (error) {
+    console.error('Error fetching cards by status:', error);
+    throw error;
+  }
+
+  // Transform the data to match our frontend model
+  return (data || []).map((card: any) => ({
+    id: card.id,
+    title: card.title,
+    description: card.description || undefined,
+    order: card.order,
+    columnId: card.column_id, // Still keeping for backward compatibility
+    statusId: card.status_id,
+    boardId: card.board_id,
+    createdAt: card.created_at,
+    updatedAt: card.updated_at,
+    // Handle assignee
+    assigneeId: card.assignee_id,
+    assignee: card.assignee ? {
+      id: card.assignee.id,
+      name: card.assignee.email,
+      avatarUrl: card.assignee.user_metadata?.avatar_url
+    } : undefined,
+    // Ensure labels are available
+    labels: card.metadata?.labels || [],
+    // Extract other metadata fields
+    cardType: card.metadata?.cardType,
+    priority: card.metadata?.priority,
+    dueDate: card.metadata?.dueDate,
+    blocked: card.metadata?.blocked,
+    blockReason: card.metadata?.blockReason,
+    // Preserve all metadata
+    metadata: card.metadata || {}
+  }));
+}
+
+// Update a card's status
+export async function updateCardStatus(cardId: string, statusId: string): Promise<Card> {
+  const supabase = createClient();
+  
+  // Get the next order number for this status
+  const { data: existingCards } = await supabase
+    .from('cards')
+    .select('order')
+    .eq('status_id', statusId)
+    .order('order', { ascending: false })
+    .limit(1);
+  
+  const nextOrder = existingCards && existingCards.length > 0 
+    ? existingCards[0].order + 1 
+    : 1;
+
+  // Update the card
+  const { data, error } = await supabase
+    .from('cards')
+    .update({ 
+      status_id: statusId,
+      order: nextOrder
+    })
+    .eq('id', cardId)
+    .select(`
+      *,
+      assignee:assignee_id(id, email, user_metadata)
+    `)
+    .single();
+
+  if (error) {
+    console.error('Error updating card status:', error);
+    throw error;
+  }
+
+  // Transform to our app model
+  return {
+    id: data.id,
+    title: data.title,
+    description: data.description || undefined,
+    order: data.order,
+    columnId: data.column_id, // Still keeping for backward compatibility
+    statusId: data.status_id,
+    boardId: data.board_id,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+    // Handle assignee
+    assigneeId: data.assignee_id,
+    assignee: data.assignee ? {
+      id: data.assignee.id,
+      name: data.assignee.email,
+      avatarUrl: data.assignee.user_metadata?.avatar_url
+    } : undefined,
+    // Extract metadata fields
+    labels: data.metadata?.labels || [],
+    cardType: data.metadata?.cardType,
+    priority: data.metadata?.priority,
+    dueDate: data.metadata?.dueDate,
+    blocked: data.metadata?.blocked,
+    blockReason: data.metadata?.blockReason,
+    // Preserve all metadata
+    metadata: data.metadata || {}
   };
 } 

@@ -15,8 +15,8 @@ export type Card = {
   title: string;
   description?: string;
   order: number;
-  columnId: string;
-  statusId?: string;
+  columnId: string; // Will be removed in future steps; kept for backward compatibility
+  statusId: string; // Now required instead of optional
   boardId: string;
   createdAt?: string;
   updatedAt?: string;

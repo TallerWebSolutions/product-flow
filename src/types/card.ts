@@ -2,12 +2,12 @@ export interface Card {
   id: string;
   title: string;
   description?: string;
-  columnId: string;
+  columnId: string; // Will be removed in future steps; kept for backward compatibility
+  statusId: string; // Now required instead of optional
   order: number;
   createdAt: string;
   updatedAt: string;
   boardId?: string;
-  statusId?: string; // Reference to a status entity
 
   // Enhanced fields
   cardType?: 'feature' | 'bug' | 'chore';

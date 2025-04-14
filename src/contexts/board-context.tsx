@@ -25,8 +25,8 @@ interface CardData {
   title: string;
   description: string | null;
   order: number;
-  column_id: string;
-  status_id: string | null;
+  column_id: string; // Will be removed in future migration; kept for backward compatibility
+  status_id: string; // Now required instead of optional
   board_id?: string; // Make board_id optional since we might not have it in some DB responses
   created_at: string;
   updated_at: string;
@@ -132,7 +132,7 @@ export function BoardProvider({
       description: dbCard.description || undefined,
       order: dbCard.order,
       columnId: dbCard.column_id,
-      statusId: dbCard.status_id || undefined,
+      statusId: dbCard.status_id,
       boardId: cardBoardId,
       createdAt: dbCard.created_at,
       updatedAt: dbCard.updated_at,
