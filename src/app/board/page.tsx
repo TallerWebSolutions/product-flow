@@ -11,6 +11,8 @@ import { Toaster } from "sonner";
 import { Card } from "@/components/board/card";
 import { CreateTemplateButton } from "@/components/board/card-templates";
 import { CardModal } from "@/components/board/card-modal";
+import { useSearchParams } from "next/navigation";
+import React from "react";
 
 function BoardContent() {
   const {
@@ -477,15 +479,9 @@ declare global {
 // Default UUID to use if no board ID is provided
 const DEFAULT_BOARD_ID = "d3d5e773-107f-4bd6-8249-345d0b3b737a";
 
-export default function BoardPage({
-  params,
-  searchParams,
-}: {
-  params: { slug?: string[] };
-  searchParams: { id?: string };
-}) {
-  // Get board ID from query parameters with a fallback
-  const boardId = searchParams.id || DEFAULT_BOARD_ID;
+export default function BoardPage() {
+  const searchParams = useSearchParams();
+  const boardId = searchParams.get("id") || DEFAULT_BOARD_ID;
 
   return (
     <BoardProvider boardId={boardId}>
