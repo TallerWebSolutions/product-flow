@@ -26,6 +26,7 @@ interface CardData {
   description: string | null;
   order: number;
   column_id: string;
+  status_id: string | null;
   board_id?: string; // Make board_id optional since we might not have it in some DB responses
   created_at: string;
   updated_at: string;
@@ -131,6 +132,7 @@ export function BoardProvider({
       description: dbCard.description || undefined,
       order: dbCard.order,
       columnId: dbCard.column_id,
+      statusId: dbCard.status_id || undefined,
       boardId: cardBoardId,
       createdAt: dbCard.created_at,
       updatedAt: dbCard.updated_at,
@@ -227,7 +229,7 @@ export function BoardProvider({
       const { data: dbCards, error: cardsError } = await supabase
         .from('cards')
         .select(`
-          id, title, description, order, column_id,
+          id, title, description, order, column_id, status_id,
           assignee_id, created_at, updated_at, metadata
         `)
         .in('column_id', dbColumns?.map(col => col.id) || [])
@@ -275,6 +277,7 @@ export function BoardProvider({
             description: dbCard.description || undefined,
             order: dbCard.order,
             columnId: dbCard.column_id,
+            statusId: dbCard.status_id || undefined,
             boardId: boardId,
             createdAt: dbCard.created_at,
             updatedAt: dbCard.updated_at,
@@ -1239,6 +1242,7 @@ export function BoardProvider({
         title: cardData.title || 'New Card',
         description: cardData.description || null,
         column_id: columnId,
+        status_id: cardData.statusId || null,
         // Calculate the next order if not provided
         order: cardData.order !== undefined ? cardData.order : getNextOrder(columnId),
         assignee_id: cardData.assigneeId || null,
@@ -1295,6 +1299,7 @@ export function BoardProvider({
         metadata: cardMetadata,
         assignee: _unused, // Using _unused to indicate an intentionally unused variable
         assigneeId,
+        statusId,
         ...basicCardData
       } = cardData;
 
@@ -1316,6 +1321,7 @@ export function BoardProvider({
       const dbCardData = {
         ...basicCardData,
         assignee_id: assigneeId,
+        status_id: statusId,
         metadata
       };
 

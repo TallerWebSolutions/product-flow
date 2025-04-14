@@ -7,6 +7,7 @@ export interface Card {
   createdAt: string;
   updatedAt: string;
   boardId?: string;
+  statusId?: string; // Reference to a status entity
 
   // Enhanced fields
   cardType?: 'feature' | 'bug' | 'chore';
@@ -40,4 +41,13 @@ export interface Epic {
   name: string;
   description?: string;
   color?: string;
+}
+
+// New Status interface based on the diagram
+export interface Status {
+  id: string;
+  name: string;
+  color?: string;
+  order?: number;
+  transitionId?: string; // Transition relationship from diagram
 }

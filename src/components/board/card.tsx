@@ -16,6 +16,7 @@ export type Card = {
   description?: string;
   order: number;
   columnId: string;
+  statusId?: string;
   boardId: string;
   createdAt?: string;
   updatedAt?: string;

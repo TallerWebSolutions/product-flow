@@ -25,6 +25,43 @@ export interface Column {
 }
 
 /**
+ * Status represents a card status
+ */
+export interface Status {
+  id: string;
+  name: string;
+  color: string | null;
+  order: number;
+  transition_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Transition represents a workflow transition between statuses
+ */
+export interface Transition {
+  id: string;
+  name: string | null;
+  from_status_id: string;
+  to_status_id: string;
+  user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * StatusColumn maps statuses to columns in the board
+ */
+export interface StatusColumn {
+  id: string;
+  status_id: string;
+  column_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
  * Card represents a task card in a Kanban board column
  */
 export interface Card {
@@ -32,6 +69,7 @@ export interface Card {
   title: string;
   description: string | null;
   column_id: string;
+  status_id: string | null;
   order: number;
   assignee_id: string | null;
   created_at: string;
@@ -89,4 +127,7 @@ export type Tables = {
   columns: Column;
   cards: Card;
   metrics: Metric;
+  statuses: Status;
+  transitions: Transition;
+  status_columns: StatusColumn;
 };
