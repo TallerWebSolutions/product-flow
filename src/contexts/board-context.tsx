@@ -50,7 +50,7 @@ type BoardContextType = {
   reorderCards: (updatedCards: Card[]) => void;
   moveCardToColumn: (cardId: string, sourceColumnId: string | null, targetColumnId: string) => void;
   findColumnById: (id: string, columnsToSearch?: Column[]) => Column | undefined;
-  addCard: (card: Partial<Card>) => Promise<Card>;
+  addCard: (card: Partial<Card> & { column_id?: string }) => Promise<Card>;
   updateCard: (card: Partial<Card> & { id: string }) => Promise<Card>;
   deleteCard: (cardId: string) => Promise<void>;
 };
@@ -1214,30 +1214,33 @@ export function BoardProvider({
   // When state updates, memoize columns to prevent unnecessary re-renders
   const memoizedColumns = useMemoizedColumns(columns);
 
-  const addCard = async (cardData: Partial<Card>): Promise<Card> => {
+  const addCard = async (cardData: Partial<Card> & { column_id?: string }): Promise<Card> => {
     try {
       const supabase = await createClient();
 
-      console.log(`Creating card in column: ${cardData.columnId}`);
+      // Extract the column ID, checking both columnId and column_id properties
+      const columnId = cardData.columnId || cardData.column_id;
+      
+      console.log(`Creating card in column: ${columnId}`);
 
       // Get the column to ensure board association
       const { data: columnData } = await supabase
         .from('columns')
         .select('board_id')
-        .eq('id', cardData.columnId)
+        .eq('id', columnId)
         .single();
 
       if (!columnData) {
-        throw new Error(`Column ${cardData.columnId} not found`);
+        throw new Error(`Column ${columnId} not found`);
       }
 
       // Prepare the new card with the correct board ID
       const newCard = {
         title: cardData.title || 'New Card',
         description: cardData.description || null,
-        column_id: cardData.columnId,
+        column_id: columnId,
         // Calculate the next order if not provided
-        order: cardData.order !== undefined ? cardData.order : getNextOrder(cardData.columnId),
+        order: cardData.order !== undefined ? cardData.order : getNextOrder(columnId),
         assignee_id: cardData.assigneeId || null,
         metadata: {
           ...(cardData.metadata || {}),
