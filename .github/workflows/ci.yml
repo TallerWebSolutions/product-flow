@@ -1,0 +1,31 @@
+name: Node.js CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x] # Specify desired Node.js version
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json' # Point to the correct lock file if different
+    - name: Install Dependencies
+      run: npm ci
+    - name: Run Lint Check
+      run: npm run lint # Assumes you have a lint script in package.json
+    - name: Run Type Check
+      run: npm run typecheck # Assumes you have a typecheck script (e.g., tsc --noEmit)
+    # Add build step if needed: run: npm run build
